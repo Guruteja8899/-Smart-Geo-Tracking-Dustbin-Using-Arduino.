@@ -1,0 +1,113 @@
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>  // Include TinyGPS++ library
+
+SoftwareSerial gsmSerial(7, 8);  // RX, TX for GSM Module
+SoftwareSerial gpsSerial(4, 3);  // RX, TX for GPS Module
+TinyGPSPlus gps;                 // Create TinyGPS++ object
+
+void setup() {
+  Serial.begin(9600);
+  gsmSerial.begin(9600);
+  gpsSerial.begin(9600);
+
+  Serial.println("Initializing GSM Module...");
+  delay(2000);
+
+  gsmSerial.listen();
+  if (testATCommand()) {
+    Serial.println("GSM Module is Ready.");
+  } else {
+    Serial.println("GSM Module Not Responding!");
+  }
+}
+
+void loop() {
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+
+    if (command.equalsIgnoreCase("OK")) {
+      Serial.println("Fetching GPS location...");
+      String locationLink = getGPSLocation();
+      Serial.println("Sending SMS...");
+      sendSMS("+917569060846", "Hi, check my location: " + locationLink);
+    }
+  }
+}
+
+bool testATCommand() {
+  gsmSerial.listen();
+  Serial.println("Sending AT command...");
+  gsmSerial.println("AT");
+  delay(1000);
+  return readGSMResponse("OK");
+}
+
+void sendSMS(String phoneNumber, String message) {
+  gsmSerial.listen();
+
+  Serial.println("Setting SMS mode...");
+  gsmSerial.println("AT+CMGF=1");
+  delay(1000);
+  if (!readGSMResponse("OK")) {
+    Serial.println("Failed to set SMS mode!");
+    return;
+  }
+
+  Serial.println("Sending SMS...");
+  gsmSerial.print("AT+CMGS=\"");
+  gsmSerial.print(phoneNumber);
+  gsmSerial.println("\"");
+  delay(1000);
+  if (!readGSMResponse(">")) {
+    Serial.println("Failed to enter SMS text mode!");
+    return;
+  }
+
+  gsmSerial.println(message);
+  delay(500);
+  gsmSerial.write(26);  // Ctrl+Z
+  delay(5000);
+
+  if (readGSMResponse("OK")) {
+    Serial.println("SMS Sent Successfully!");
+  } else {
+    Serial.println("Failed to send SMS.");
+  }
+}
+
+bool readGSMResponse(String expectedResponse) {
+  String response = "";
+  unsigned long startTime = millis();
+
+  while (millis() - startTime < 5000) {
+    if (gsmSerial.available()) {
+      char c = gsmSerial.read();
+      response += c;
+      Serial.print(c);
+    }
+  }
+  return response.indexOf(expectedResponse) != -1;
+}
+
+// Function to get GPS location directly
+String getGPSLocation() {
+  gpsSerial.listen();
+
+  unsigned long startTime = millis();
+  while (millis() - startTime < 5000) { // Wait up to 5 seconds for valid GPS data
+    while (gpsSerial.available()) {
+      gps.encode(gpsSerial.read());  // Feed data into TinyGPS++
+    }
+    
+    if (gps.location.isValid()) {  // Check if valid GPS data is available
+      float lat = gps.location.lat();
+      float lon = gps.location.lng();
+      Serial.print("Latitude: "); Serial.println(lat, 6);
+      Serial.print("Longitude: "); Serial.println(lon, 6);
+      return "https://maps.google.com/?q=" + String(lat, 6) + "," + String(lon, 6);
+    }
+  }
+
+  return "Location not available";
+}
